@@ -1,4 +1,12 @@
+# Verðtrygging — eigið fé reiknivél
+
+A client-side Vite + React SPA for tracking how your **equity** in an
+index-linked (verðtryggt) mortgage develops over time. Extracted from the
+`home` monorepo calculator and made standalone + anonymized.
+
 **[Live at lanareiknivel.solberg.club](https://lanareiknivel.solberg.club)** · [GitHub](https://github.com/jokull/verdtrygging)
+
+![Debt & equity chart](docs/screenshot.png)
 
 ## Stack
 
@@ -14,29 +22,34 @@ No backend, no server, no telemetry. The workbook never leaves the browser.
 
 ## How it works
 
-1. **Blank until upload.** The chart section shows a prompt ("Want to view how
-   your equity has developed? Upload payment history — no data is shared or
-   uploaded, it stays in your browser") until the user uploads an `.xlsx`.
-2. **Uploads stack by loan.** Every distinct `Lánsnúmer` (loanId) across all
-   uploaded files becomes its own loan series. Re-uploading the same rows does
-   not double-count (dedupe by date + principal + indexation).
-3. **Debt is reconstructed backward.** For each loan series the user enters its
-   current balance ("staða í dag"); the monthly debt curve is walked backward
-   from there using each month's höfuðstóll (principal) and verðbætur
-   (indexation) — `balance_before = balance_after − indexation + principal`.
+1. **Loans are the source of truth.** Each loan is defined by its manual terms
+   (current balance, APR, remaining months, method, extra payments) — the same
+   fields the repayment schedule uses. Enter them in the loan card.
+2. **Payment history is optional enrichment.** Each loan card can attach a real
+   Arion "LoanPayments" `.xlsx` export. The upload hydrates the loan's
+   `Lánsnúmer`, origination principal and start month (from the `Útgreiðsla`
+   disbursement row) and stores the real monthly ledger. The manual balance
+   stays the single anchor. Attach / detach per card.
+3. **Chart = derived view.** For each loan: real past (if history attached,
+   reconstructed backward from the balance — `balance_before = balance_after −
+   indexation + principal`) + forward projection (from the loan's terms via the
+   same engine the schedule table uses), joined at today. A loan shows a
+   projection even with no history; history just makes the past real.
 4. **Property is indexed by a real HMS series.** Pick a property type + region
    (fjölbýli / sérbýli × höfuðborgarsvæði / landsbyggð, or all-Iceland) from
-   the dropdown; the property value is anchored so `kaupverð` is the value at
-   the chart's first month and scales by the HMS index. A badge shows how fresh
-   the data is ("HMS 110.7 (mán. Jul 2026, 2 mán. gömul · birt Aug 2026)").
-   Equity = property − total debt.
+   the dropdown; property is anchored so `kaupverð` is the value at the chart's
+   first month and scales by the HMS index. A badge shows how fresh the data is
+   ("HMS 110.7 (mán. Jul 2026, 2 mán. gömul · birt Aug 2026)"). Equity =
+   property − total debt.
 5. **`today` is the real current date** — the "today" marker, the chart's right
    edge, and the loan defaults (startMonth, base-rate years) all derive from
    `new Date()`, not a baked-in snapshot.
 
-The monthly series lives in `src/data/hms-data.json` (generated); `src/data/hms.ts`
-is the logic wrapper (types, property-type options, per-month interpolation).
-The data is captured from hms.is `kaupvisitala.csv` (columns
+### HMS index data
+
+The monthly series lives in `src/data/hms-data.json` (generated);
+`src/data/hms.ts` is the logic wrapper (types, property-type options, per-month
+interpolation). The data is captured from hms.is `kaupvisitala.csv` (columns
 `VISITALA_FJOLBYLI_HOFUDBORGARSVAEDI`, `VISITALA_SERBYLI_*`, …). Seven series,
 monthly 2020-01 → 2026-07, all published Aug 2026.
 
@@ -80,6 +93,6 @@ bun run build
 # copy dist/ to a static server / CDN / wrangler pages
 ```
 
-The original `home` deployment serves `calculator/dist` behind Caddy on the
-mac-mini (`lanareiknivel.solberg.club`). This repo is standalone; point it at
-whatever static host you like and serve `dist/` as the root.
+The `home` deployment serves `calculator/dist` behind Caddy on the mac-mini
+(`lanareiknivel.solberg.club`). This repo is standalone; point it at whatever
+static host you like and serve `dist/` as the root.

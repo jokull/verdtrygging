@@ -112,7 +112,9 @@ interface Props {
 }
 
 export function DebtEquityChart({ loans, assumptions }: Props) {
-  const [purchasePrice, setPurchasePrice] = useState(60_000_000); // anonymized default
+  // Anonymized default — high enough that equity (property − debt) is positive
+  // with the ~77M anonymized loan totals.
+  const [purchasePrice, setPurchasePrice] = useState(125_000_000);
   const [hmsKey, setHmsKey] = useState("fjolbyliCap");
   const [real, setReal] = useState(false);
   const [showPension, setShowPension] = useState(false);
