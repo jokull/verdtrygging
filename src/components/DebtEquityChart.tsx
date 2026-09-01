@@ -118,6 +118,9 @@ export function DebtEquityChart({ loans, assumptions }: Props) {
   const [hmsKey, setHmsKey] = useState("fjolbyliCap");
   const [real, setReal] = useState(false);
   const [showPension, setShowPension] = useState(false);
+  // Forward-projection window. History is ALWAYS shown regardless; this only
+  // trims how far the projection extends past today.
+  const [horizonYears, setHorizonYears] = useState<number | null>(null); // null = full term
 
   const today = new Date();
   const todayKey = monthKey(today);
@@ -144,9 +147,12 @@ export function DebtEquityChart({ loans, assumptions }: Props) {
     const earliestHistory = earlyMonths.length ? earlyMonths[0]! : todayKey;
 
     // Projection: the base ("Grunn") scenario, matching the Schedule table.
-    const numMonths = Math.ceil(
-      Math.max(...loans.map((l) => l.remainingMonths)) * 1.5
-    );
+    // The horizon only trims the forward projection; history is never clipped.
+    const maxRemaining = Math.max(...loans.map((l) => l.remainingMonths));
+    const numMonths =
+      horizonYears != null
+        ? horizonYears * 12
+        : Math.ceil(maxRemaining * 1.5);
     const cpiSeries = buildCPISeries(assumptions.startMonth, numMonths, CPI_SCENARIO);
 
     const debtBy = new Map<string, number>();
@@ -195,7 +201,7 @@ export function DebtEquityChart({ loans, assumptions }: Props) {
       };
     });
     return { rows, debtByMonth: debtBy };
-  }, [loans, assumptions, purchasePrice, hmsKey, todayKey]);
+  }, [loans, assumptions, purchasePrice, hmsKey, todayKey, horizonYears]);
 
   // One continuous CPI series from the first month to now — for deflation.
   const fullCpi = useMemo(
@@ -433,6 +439,21 @@ export function DebtEquityChart({ loans, assumptions }: Props) {
             className="accent-blue-500"
           />
           Sýna séreignarsparnað (bláir punktar)
+        </label>
+        <label className="flex items-center gap-1">
+          Tímagluggi:
+          <select
+            value={horizonYears ?? ""}
+            onChange={(e) =>
+              setHorizonYears(e.target.value === "" ? null : Number(e.target.value))
+            }
+            className="border border-neutral-300 px-1 py-0.5 text-xs"
+          >
+            <option value="">Allur lánstími</option>
+            <option value="10">10 ár</option>
+            <option value="15">15 ár</option>
+            <option value="20">20 ár</option>
+          </select>
         </label>
         {(() => {
           const todayRow = displayRowsByMonth.get(todayKey);
