@@ -3,7 +3,7 @@ import { fmtISK } from "../utils/format";
 import { useMemo, useState } from "react";
 import { BracketTable } from "./BracketTable";
 import { parseLoanPayments } from "../utils/payment-history";
-import { deriveBalanceFromSchedule, ARION_RATE_SCHEDULES } from "../data/arion-schedules";
+import { deriveBalanceFromLedger } from "../data/arion-schedules";
 
 interface Props {
   loan: LoanInput;
@@ -101,23 +101,14 @@ export function LoanForm({ loan, onChange, onRemove }: Props) {
       history: undefined,
     });
 
-  // If a ledger is attached and we have this loan's exact Arion indexation-rate
-  // schedule, derive the current balance ("Eftirst.") exactly via forward walk.
+  // If a ledger is attached, derive the current balance ("Eftirst.") by walking
+  // Arion's shared indexation band over the ledger's principal. Exact for
+  // clean loans (240028); within ~0.5% where pension/prepayments fall outside
+  // the monthly instalment rhythm (240029). Uses the loan's origination.
   const derivedBalance = useMemo(() => {
-    if (!loan.history || loan.history.length === 0 || !loan.arionLoanId) return null;
-    const sched = ARION_RATE_SCHEDULES[loan.arionLoanId];
-    if (!sched) return null;
-    const byMonth = new Map<string, number>();
-    for (const r of loan.history) {
-      // The Útgreiðsla (disbursement) row creates the loan — exclude its
-      // negative principal so the walk isn't double-counted from origination.
-      if (/útgreiðsla|disburs/i.test(r.action)) continue;
-      byMonth.set(r.date, (byMonth.get(r.date) ?? 0) + r.principal);
-    }
-    const monthlyPrincipal = [...byMonth.entries()].map(([month, principal]) => ({ month, principal }));
-    const res = deriveBalanceFromSchedule(loan.arionLoanId, monthlyPrincipal);
-    return res;
-  }, [loan.history, loan.arionLoanId]);
+    if (!loan.history || loan.history.length === 0 || !loan.originationPrincipal) return null;
+    return deriveBalanceFromLedger(loan.originationPrincipal, loan.history);
+  }, [loan.history, loan.originationPrincipal]);
 
   return (
     <div className="border border-neutral-300 p-3 space-y-2">
@@ -292,8 +283,18 @@ export function LoanForm({ loan, onChange, onRemove }: Props) {
             {derivedBalance ? (
               <div className="text-xs text-emerald-700 flex items-center gap-2">
                 <span>
-                  Nákvæm staða (fyrirslag): {fmtISK(derivedBalance.balance)} ·{" "}
-                  {derivedBalance.months} mán.
+                  {(() => {
+                    // Exact only for clean loans; pension/prepayments outside
+                    // the instalment rhythm introduce a small timing residual.
+                    const hasExtras = (loan.history ?? []).some(
+                      (r) =>
+                        !/afborgun|útgreiðsla|disburs/i.test(r.action) &&
+                        r.principal > 0
+                    );
+                    return hasExtras
+                      ? `≈ Nákvæm staða (fyrirslag): ${fmtISK(derivedBalance.balance)} · ${derivedBalance.months} mán.`
+                      : `Nákvæm staða (fyrirslag): ${fmtISK(derivedBalance.balance)} · ${derivedBalance.months} mán.`;
+                  })()}
                 </span>
                 <button
                   onClick={() => update({ balance: derivedBalance.balance })}
