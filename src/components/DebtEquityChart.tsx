@@ -121,6 +121,13 @@ export function DebtEquityChart({ loans, assumptions }: Props) {
   // Forward-projection window. History is ALWAYS shown regardless; this only
   // trims how far the projection extends past today.
   const [horizonYears, setHorizonYears] = useState<number | null>(null); // null = full term
+  // Nominal property-growth assumption (%/yr) for months AFTER the last HMS
+  // data point. The HMS index only exists to 2026-07; without this the model
+  // clamps it flat, which in real terms makes property fall purely via CPI.
+  // Historic months (≤ last HMS point) still use the real HMS index.
+  // Default 2.5%/yr ≈ the actual 2024-26 HMS trajectory (+1.4-2.2%/yr); with
+  // CPI at ~4.2% that makes real prices fall ~2%/yr, matching observations.
+  const [growthPct, setGrowthPct] = useState(2.5);
 
   const today = new Date();
   const todayKey = monthKey(today);
@@ -187,21 +194,36 @@ export function DebtEquityChart({ loans, assumptions }: Props) {
     }
 
     // Carry the latest known debt into months with no data (within the span).
+    // Last HMS data month + the nominal property value at that point. Historic
+    // months (≤ lastHmsMonth) use the real HMS index; forward months compound
+    // the nominal value at growthPct (so in real terms property tracks the
+    // growth-vs-inflation gap instead of being clamped flat).
+    const hmsSeries_ = hmsSeries(hmsKey);
+    const lastHmsMonth = hmsSeries_.points[hmsSeries_.points.length - 1]!.month;
+    const hmsAtEarliest = hmsIndexForMonth(hmsKey, earliestHistory);
+    const baseNominal = purchasePrice * (hmsIndexForMonth(hmsKey, lastHmsMonth) / hmsAtEarliest);
+
     const rows: Row[] = months.map((m) => {
       const debt = debtBy.get(m) ?? 0;
-      const property = Math.round(
-        purchasePrice * (hmsIndexForMonth(hmsKey, m) / hmsIndexForMonth(hmsKey, earliestHistory))
-      );
+      let property: number;
+      if (m <= lastHmsMonth) {
+        // Real index (historic).
+        property = purchasePrice * (hmsIndexForMonth(hmsKey, m) / hmsAtEarliest);
+      } else {
+        // Compound nominal growth from the last known HMS value.
+        const monthsPast = monthDiff(lastHmsMonth, m);
+        property = baseNominal * Math.pow(1 + growthPct / 100, monthsPast / 12);
+      }
       return {
         month: new Date(`${m}-01T00:00:00Z`),
         debt,
-        property,
+        property: Math.round(property),
         equity: property - debt,
         historic: historicSet.has(m),
       };
     });
     return { rows, debtByMonth: debtBy };
-  }, [loans, assumptions, purchasePrice, hmsKey, todayKey, horizonYears]);
+  }, [loans, assumptions, purchasePrice, hmsKey, todayKey, horizonYears, growthPct]);
 
   // One continuous CPI series from the first month to now — for deflation.
   const fullCpi = useMemo(
@@ -387,6 +409,17 @@ export function DebtEquityChart({ loans, assumptions }: Props) {
             step={1_000_000}
             min={0}
             className="w-24 border border-neutral-300 px-1 py-0.5 text-right text-xs"
+          />
+        </label>
+        <label className="flex items-center gap-1">
+          Vöxtur fasteignaverðs (%/ár):
+          <input
+            type="number"
+            value={growthPct}
+            onChange={(e) => setGrowthPct(Number(e.target.value))}
+            step={0.5}
+            min={0}
+            className="w-16 border border-neutral-300 px-1 py-0.5 text-right text-xs"
           />
         </label>
         <label className="flex items-center gap-1">
