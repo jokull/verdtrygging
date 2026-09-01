@@ -202,7 +202,16 @@ export function DebtEquityChart({ loans, assumptions }: Props) {
     () => (rows.length ? buildCPISeries(monthKey(rows[0]!.month), rows.length, CPI_SCENARIO) : []),
     [rows]
   );
-  const nowCpiIdx = rows.length ? fullCpi.length - 1 : 0;
+  // Deflation anchor = TODAY's row index, NOT the last (projection-end) row. In
+  // 'real' mode each value is scaled by CPI_today/CPI_month, so today is the
+  // reference (factor 1) and past/future shrink/grow relative to it. Using the
+  // last row (2054) inflated everything ~2x.
+  const nowCpiIdx = rows.length
+    ? (() => {
+        const idx = rows.findIndex((r) => monthKey(r.month) >= todayKey);
+        return idx === -1 ? rows.length - 1 : Math.min(idx, fullCpi.length - 1);
+      })()
+    : 0;
 
   const displayRows = useMemo(() => {
     if (!real || rows.length === 0) return rows;
