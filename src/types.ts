@@ -34,6 +34,10 @@ export interface LoanInput {
   startMonth: string; // "YYYY-MM" — the month the projection begins (today by
   // default; set to the loan's origination month when a ledger is attached so
   // the projection/schedule span matches the loan's real term).
+  // Current verðtrygging indexation rate, annual %. Used to fill indexation
+  // for months outside the embedded Arion band (or for a non-band loan). The
+  // user provides it; it's the one thing the spreadsheet doesn't carry.
+  currentIndexRate?: number;
   history?: UploadedRow[];
 }
 

@@ -59,23 +59,33 @@ export const ARION_INDEXATION_BAND: RatePoint[] = [
 /**
  * Derive a verðtryggt loan's current balance by walking the shared indexation
  * band against the loan's monthly principal reductions (from an uploaded
- * ledger). Returns the latest balance, or null if unsupported.
+ * ledger). For months not in the embedded band, `currentRate` (a monthly
+ * fraction) is used as the indexation rate — so any loan can be derived, using
+ * the embedded band where known and the user's current verðtrygging rate to
+ * fill the gaps. Returns the latest balance, or null if unsupported.
  */
 export function deriveBalanceFromBand(
   origination: number,
-  monthlyPrincipal: Array<{ month: string; principal: number }>
+  monthlyPrincipal: Array<{ month: string; principal: number }>,
+  currentRate?: number
 ): { balance: number; months: number } {
   const bandByMonth = new Map(ARION_INDEXATION_BAND.map((p) => [p.month, p.rate]));
+  // Walk starts at the loan's first payment month (never before its ledger
+  // begins — a loan issued after the band starts must not get band rates on
+  // months that predate it). End = union of band + ledger months.
+  const ledgerMonths = monthlyPrincipal.map((m) => m.month).filter(Boolean).sort();
+  const start = ledgerMonths[0] ?? ARION_INDEXATION_BAND[0]!.month;
   const months = new Set<string>([
     ...ARION_INDEXATION_BAND.map((p) => p.month),
-    ...monthlyPrincipal.map((m) => m.month),
+    ...ledgerMonths,
   ]);
-  const sorted = Array.from(months).sort();
+  const sorted = Array.from(months).sort().filter((m) => m >= start);
 
   let bal = origination;
   let seen = 0;
   for (const m of sorted) {
-    const rate = bandByMonth.get(m) ?? 0;
+    // Known band month → band rate; otherwise the user's current rate (or 0).
+    const rate = bandByMonth.get(m) ?? currentRate ?? 0;
     const principal = monthlyPrincipal.find((x) => x.month === m)?.principal ?? 0;
     bal = bal * (1 + rate) - principal;
     seen++;
@@ -85,12 +95,14 @@ export function deriveBalanceFromBand(
 
 /**
  * Convenience: derive a loan's balance from its ledger (disbursement row
- * excluded) using the shared band. Returns null if the ledger has no usable
- * principal (no band/ledger overlap worth reporting).
+ * excluded) using the shared band, falling back to `currentRate` (monthly
+ * fraction) for months outside the band. Returns null if the ledger has no
+ * usable principal.
  */
 export function deriveBalanceFromLedger(
   origination: number,
-  history: Array<{ date: string; action: string; principal: number }>
+  history: Array<{ date: string; action: string; principal: number }>,
+  currentRate?: number
 ): { balance: number; months: number } | null {
   const byMonth = new Map<string, number>();
   for (const r of history) {
@@ -99,5 +111,5 @@ export function deriveBalanceFromLedger(
   }
   if (byMonth.size === 0) return null;
   const monthlyPrincipal = [...byMonth.entries()].map(([month, principal]) => ({ month, principal }));
-  return deriveBalanceFromBand(origination, monthlyPrincipal);
+  return deriveBalanceFromBand(origination, monthlyPrincipal, currentRate);
 }

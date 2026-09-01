@@ -67,6 +67,8 @@ export function LoanList({ loans, onChange }: Props) {
           pensionPrincipal: 0,
           rateChanges: [],
           startMonth: parsed.originationMonth || currentMonth(),
+          // Current verðtrygging indexation rate default (5.03% ≈ Arion's band).
+          currentIndexRate: 5.03,
           arionLoanId: parsed.loanId || undefined,
           originationPrincipal: parsed.originationPrincipal || undefined,
           originationMonth: parsed.originationMonth || undefined,

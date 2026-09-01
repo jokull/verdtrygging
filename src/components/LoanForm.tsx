@@ -3,7 +3,7 @@ import { fmtISK } from "../utils/format";
 import { useMemo, useState } from "react";
 import { BracketTable } from "./BracketTable";
 import { parseLoanPayments } from "../utils/payment-history";
-import { deriveBalanceFromLedger } from "../data/arion-schedules";
+import { ARION_INDEXATION_BAND, deriveBalanceFromLedger } from "../data/arion-schedules";
 
 interface Props {
   loan: LoanInput;
@@ -84,6 +84,8 @@ export function LoanForm({ loan, onChange, onRemove }: Props) {
         originationMonth: parsed.originationMonth || loan.originationMonth,
         // Start the projection at the ledger's origination month (was today).
         startMonth: parsed.originationMonth || loan.startMonth,
+        // Current verðtrygging indexation rate default (5.03% ≈ Arion's band).
+        currentIndexRate: loan.currentIndexRate ?? 5.03,
         history: parsed.rows,
       });
     } catch (err) {
@@ -102,13 +104,14 @@ export function LoanForm({ loan, onChange, onRemove }: Props) {
     });
 
   // If a ledger is attached, derive the current balance ("Eftirst.") by walking
-  // Arion's shared indexation band over the ledger's principal. Exact for
-  // clean loans (240028); within ~0.5% where pension/prepayments fall outside
-  // the monthly instalment rhythm (240029). Uses the loan's origination.
+  // Arion's shared indexation band over the ledger's principal. `currentIndexRate`
+  // (annual %) fills indexation for months outside the band. The one thing the
+  // spreadsheet doesn't carry is the current verðtrygging rate — ask for it.
   const derivedBalance = useMemo(() => {
     if (!loan.history || loan.history.length === 0 || !loan.originationPrincipal) return null;
-    return deriveBalanceFromLedger(loan.originationPrincipal, loan.history);
-  }, [loan.history, loan.originationPrincipal]);
+    const monthly = loan.currentIndexRate ? Math.pow(1 + loan.currentIndexRate / 100, 1 / 12) - 1 : undefined;
+    return deriveBalanceFromLedger(loan.originationPrincipal, loan.history, monthly);
+  }, [loan.history, loan.originationPrincipal, loan.currentIndexRate]);
 
   return (
     <div className="border border-neutral-300 p-3 space-y-2">
@@ -144,6 +147,13 @@ export function LoanForm({ loan, onChange, onRemove }: Props) {
           onChange={(v) => update({ apr: v })}
           step={0.01}
           suffix="%"
+        />
+        <NumInput
+          label="Verðtrygging"
+          value={loan.currentIndexRate ?? 5.03}
+          onChange={(v) => update({ currentIndexRate: v })}
+          step={0.01}
+          suffix="%/ár"
         />
         <NumInput
           label="Mán. eftir"
@@ -284,16 +294,23 @@ export function LoanForm({ loan, onChange, onRemove }: Props) {
               <div className="text-xs text-emerald-700 flex items-center gap-2">
                 <span>
                   {(() => {
-                    // Exact only for clean loans; pension/prepayments outside
-                    // the instalment rhythm introduce a small timing residual.
+                    // Exact only when every ledger month is covered by the
+                    // embedded Arion band AND the loan has no pension/prepayments
+                    // outside the instalment rhythm. Otherwise ≈ (timing residual
+                    // or months filled by the user's current index rate).
                     const hasExtras = (loan.history ?? []).some(
                       (r) =>
                         !/afborgun|útgreiðsla|disburs/i.test(r.action) &&
                         r.principal > 0
                     );
-                    return hasExtras
-                      ? `≈ Nákvæm staða (fyrirslag): ${fmtISK(derivedBalance.balance)} · ${derivedBalance.months} mán.`
-                      : `Nákvæm staða (fyrirslag): ${fmtISK(derivedBalance.balance)} · ${derivedBalance.months} mán.`;
+                    const monthsOutsideBand = (loan.history ?? []).some((r) => {
+                      if (/útgreiðsla|disburs/i.test(r.action)) return false;
+                      return !ARION_INDEXATION_BAND.some((p) => p.month === r.date);
+                    });
+                    const exact = !hasExtras && !monthsOutsideBand;
+                    return exact
+                      ? `Nákvæm staða (fyrirslag): ${fmtISK(derivedBalance.balance)} · ${derivedBalance.months} mán.`
+                      : `≈ Staða (fyrirslag, byggð á verðtryggingarhlutfalli): ${fmtISK(derivedBalance.balance)} · ${derivedBalance.months} mán.`;
                   })()}
                 </span>
                 <button
