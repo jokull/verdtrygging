@@ -1,8 +1,4 @@
-# Verðtrygging — eigið fé reiknivél
-
-A client-side Vite + React SPA for tracking how your **equity** in an
-index-linked (verðtryggt) mortgage develops over time. Extracted from the
-`home` monorepo calculator and made standalone + anonymized.
+![Debt & equity chart](docs/screenshot.png)
 
 ## Stack
 
@@ -28,18 +24,31 @@ No backend, no server, no telemetry. The workbook never leaves the browser.
    current balance ("staða í dag"); the monthly debt curve is walked backward
    from there using each month's höfuðstóll (principal) and verðbætur
    (indexation) — `balance_before = balance_after − indexation + principal`.
-4. **Property grows from a purchase price** at a user-set annual rate; equity =
-   property − total debt.
+4. **Property is indexed by a real HMS series.** Pick a property type + region
+   (fjölbýli / sérbýli × höfuðborgarsvæði / landsbyggð, or all-Iceland) from
+   the dropdown; the property value is anchored so `kaupverð` is the value at
+   the chart's first month and scales by the HMS index. A badge shows how fresh
+   the data is ("HMS 110.7 (mán. Jul 2026, 2 mán. gömul · birt Aug 2026)").
+   Equity = property − total debt.
 5. **`today` is the real current date** — the "today" marker, the chart's right
    edge, and the loan defaults (startMonth, base-rate years) all derive from
    `new Date()`, not a baked-in snapshot.
+
+### HMS index data
+
+`src/data/hms.ts` ships the HMS íbúðaverðsvísitölur (nominal), captured from
+hms.is `kaupvisitala.csv` (columns `VISITALA_FJOLBYLI_HOFUDBORGARSVAEDI`,
+`VISITALA_SERBYLI_*`, …). Seven series, monthly 2020-01 → 2026-07, all published
+Aug 2026. hms.is is bot-gated, so refresh by opening the page in a real browser
+and reading the CSV (or use `agent-browser` to bypass the Vercel checkpoint).
 
 ### Data privacy
 
 - No personal data is committed. The repo ships only anonymized default loans
   (68.25M / 9.4M) — "like my loan but not exactly like it."
-- The chart has **no baked-in data**: everything it plots comes from the
-  uploaded workbook + user inputs.
+- The chart has **no baked-in personal data**: debt comes from the uploaded
+  workbook + user inputs; the only shipped data is public market data (HMS
+  index) and public historical CPI.
 - Historical CPI lives in `src/cpi.ts` (public Hagstofa data), used only for the
   optional "raunvirði" (real-terms) deflation toggle.
 

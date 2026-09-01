@@ -7,8 +7,10 @@
  * loan series (files stack). Each series' debt history is reconstructed
  * backward from an anchor balance the user supplies ("staða í dag"), using the
  * export's per-payment höfuðstóll (principal) and verðbætur (indexation).
- * Property value grows from a purchase price at a monthly rate; equity =
- * property − total debt. The "today" marker is the real current date.
+ * Property value is indexed by a real HMS series (buyer picks a property type
+ * + region), anchored so purchasePrice is the value at the chart's first
+ * month; equity = property − total debt. The "today" marker is the real
+ * current date; the UI also shows how fresh the HMS data is.
  *
  * The workbook is parsed ENTIRELY in the browser (static site, no server).
  */
@@ -21,6 +23,7 @@ import { Chart } from "@tanstack/react-charts/tooltip";
 import * as XLSX from "xlsx";
 import { buildCPISeries } from "../cpi";
 import type { ScenarioConfig } from "../types";
+import { HMS_OPTIONS, hmsIndexForMonth, hmsAgeMonths, hmsSeries } from "../data/hms";
 
 interface Row {
   month: Date;
@@ -164,8 +167,10 @@ const stepCurve: ChartCurve = {
 
 export function DebtEquityChart() {
   const [series, setSeries] = useState<LoanSeries[]>([]);
+  // Property value is indexed by a real HMS series (chosen by property type);
+  // purchasePrice is the property value at the chart's first month.
   const [purchasePrice, setPurchasePrice] = useState(60_000_000); // anonymized default
-  const [growthPct, setGrowthPct] = useState(4.5);
+  const [hmsKey, setHmsKey] = useState("fjolbyliCap");
   const [real, setReal] = useState(false);
   const [showPension, setShowPension] = useState(false);
 
@@ -268,7 +273,7 @@ export function DebtEquityChart() {
     const rows: Row[] = months.map((m) => {
       const debt = debtBy.get(m) ?? 0;
       const property = Math.round(
-        purchasePrice * Math.pow(1 + growthPct / 100, monthDiff(earliest, m) / 12)
+        purchasePrice * (hmsIndexForMonth(hmsKey, m) / hmsIndexForMonth(hmsKey, earliest))
       );
       return {
         month: new Date(`${m}-01T00:00:00Z`),
@@ -278,7 +283,7 @@ export function DebtEquityChart() {
       };
     });
     return { rows, debtByMonth: debtBy };
-  }, [series, purchasePrice, growthPct, todayKey]);
+  }, [series, purchasePrice, hmsKey, todayKey]);
 
   // One continuous CPI series from the first month to now — for deflation.
   const fullCpi = useMemo(
@@ -469,16 +474,38 @@ export function DebtEquityChart() {
           />
         </label>
         <label className="flex items-center gap-1">
-          Vöxtur fasteignaverðs (%/ár):
-          <input
-            type="number"
-            value={growthPct}
-            onChange={(e) => setGrowthPct(Number(e.target.value))}
-            step={0.5}
-            min={0}
-            className="w-16 border border-neutral-300 px-1 py-0.5 text-right text-xs"
-          />
+          Vísitala (eignategund):
+          <select
+            value={hmsKey}
+            onChange={(e) => setHmsKey(e.target.value)}
+            className="border border-neutral-300 px-1 py-0.5 text-xs"
+          >
+            {HMS_OPTIONS.map((o) => (
+              <option key={o.key} value={o.key}>
+                {o.label}
+              </option>
+            ))}
+          </select>
         </label>
+        <span className="flex items-center gap-1 text-neutral-500">
+          {(() => {
+            const s = hmsSeries(hmsKey);
+            const last = s.points[s.points.length - 1]!;
+            const age = hmsAgeMonths(hmsKey, todayKey);
+            const stamp = new Date(s.publishedAt)
+              .toLocaleDateString("is-IS", { month: "short", year: "numeric" });
+            return (
+              <span className={age > 3 ? "text-amber-600" : ""}>
+                HMS {last.index.toFixed(1)} (mán.{" "}
+                {new Date(`${last.month}-01T00:00:00Z`).toLocaleDateString("is-IS", {
+                  month: "short",
+                  year: "numeric",
+                })}
+                {age > 0 ? `, ${age} mán. gömul` : ", nýjust"} · birt {stamp})
+              </span>
+            );
+          })()}
+        </span>
         <label className="flex items-center gap-1">
           <input
             type="checkbox"
@@ -605,7 +632,9 @@ export function DebtEquityChart() {
 
       <p className="text-xs text-neutral-400">
         Saga: upphlaðin Arion greiðslusaga (höfuðstóll + verðbætur), staðan í dag
-        er akkerið. Framspá: ekki innifalin — þetta er upplýst saga eigin fjár.
+        er akkerið. Fasteignavirði er leiðrétt með HMS vísitölu (valin
+        eignategund) — kaupverðið gildir fyrir fyrsta mánuð grafarinnar.
+        Framspá: ekki innifalin — þetta er upplýst saga eigin fjár.
         Raunvirði leiðréttir öll gildi með vísitölu neysluverðs
         (CPI_now/CPI_month). Bláir punktar (valfrjálsir) = séreignarsparnaður.
       </p>
