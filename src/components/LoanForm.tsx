@@ -2,6 +2,7 @@ import type { LoanInput, RateChange, PaymentBracket } from "../types";
 import { fmtISK } from "../utils/format";
 import { useState } from "react";
 import { BracketTable } from "./BracketTable";
+import { parseLoanPayments } from "../utils/payment-history";
 
 interface Props {
   loan: LoanInput;
@@ -67,6 +68,35 @@ export function LoanForm({ loan, onChange, onRemove }: Props) {
 
   const removeRateChange = (idx: number) =>
     update({ rateChanges: loan.rateChanges.filter((_, i) => i !== idx) });
+
+  // Parse an uploaded LoanPayments .xlsx and attach it to THIS loan, hydrating
+  // the loan's Lánsnúmer + origination principal + start month from the
+  // Útgreiðsla (disbursement) row. The manual `balance` stays the anchor.
+  async function handleHistoryUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const parsed = await parseLoanPayments(file);
+      update({
+        arionLoanId: parsed.loanId || loan.arionLoanId,
+        originationPrincipal: parsed.originationPrincipal || loan.originationPrincipal,
+        originationMonth: parsed.originationMonth || loan.originationMonth,
+        history: parsed.rows,
+      });
+    } catch (err) {
+      console.error("Arion history parse failed", err);
+    } finally {
+      e.target.value = "";
+    }
+  }
+
+  const detachHistory = () =>
+    update({
+      arionLoanId: undefined,
+      originationPrincipal: undefined,
+      originationMonth: undefined,
+      history: undefined,
+    });
 
   return (
     <div className="border border-neutral-300 p-3 space-y-2">
@@ -207,6 +237,49 @@ export function LoanForm({ loan, onChange, onRemove }: Props) {
               + bæta við vaxtabreytingu
             </button>
           </div>
+        )}
+      </div>
+
+      {/* Payment history (optional) — attach a real Arion ledger to this loan. */}
+      <div className="border-t border-neutral-200 pt-2 space-y-1">
+        {loan.history && loan.history.length > 0 ? (
+          <>
+            <div className="text-xs text-neutral-500">
+              <span className="font-medium text-neutral-700">Greiðslusaga:</span>{" "}
+              {loan.history.length} færslur
+              {loan.originationMonth
+                ? ` · ${loan.originationMonth} → ${loan.history[loan.history.length - 1]!.date}`
+                : ""}
+              {loan.arionLoanId ? ` · lán ${loan.arionLoanId}` : ""}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={detachHistory}
+                className="text-xs text-neutral-400 hover:text-red-600"
+              >
+                fjarlægja greiðslusögu
+              </button>
+              <label className="text-xs text-neutral-500 hover:text-neutral-800 cursor-pointer underline">
+                skipta út
+                <input
+                  type="file"
+                  accept=".xlsx"
+                  onChange={handleHistoryUpload}
+                  className="sr-only"
+                />
+              </label>
+            </div>
+          </>
+        ) : (
+          <label className="flex items-center gap-1 text-xs text-neutral-500 cursor-pointer hover:text-neutral-800">
+            <span className="underline">+ hlaða inn greiðslusögu (.xlsx)</span>
+            <input
+              type="file"
+              accept=".xlsx"
+              onChange={handleHistoryUpload}
+              className="sr-only"
+            />
+          </label>
         )}
       </div>
     </div>

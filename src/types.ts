@@ -25,6 +25,25 @@ export interface LoanInput {
   extraBrackets: PaymentBracket[];
   pensionPrincipal: number;
   rateChanges: RateChange[];
+  // Optional real-world link — hydrated from an uploaded Arion LoanPayments
+  // export. The upload carries the loan's Lánsnúmer, origination principal and
+  // start month (the Útgreiðsla disbursement row) + its monthly payment ledger.
+  arionLoanId?: number;
+  originationPrincipal?: number;
+  originationMonth?: string; // "YYYY-MM"
+  history?: UploadedRow[];
+}
+
+/** One payment row from a LoanPayments export ("Lánsnúmer, Aðgerð, Greiðsludags.,
+ * Mynt, Höfuðstóll, Vextir, Verðbætur á höfuðstól, Verðbætur á vexti,
+ * Greiðslujöfnun, Roll-up upphæð, Dráttarvextir, Kostnaður, Samtals"). */
+export interface UploadedRow {
+  loanId: number;
+  action: string;
+  date: string; // "YYYY-MM"
+  principal: number; // Höfuðstóll
+  indexation: number; // Verðbætur á höfuðstól
+  total: number; // Samtals
 }
 
 export interface ScenarioConfig {

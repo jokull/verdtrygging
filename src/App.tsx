@@ -31,7 +31,7 @@ export function App() {
 
       <hr className="border-neutral-200" />
 
-      <DebtEquityChart />
+      <DebtEquityChart loans={loans} assumptions={assumptions} />
 
       <footer className="text-xs text-neutral-400 border-t border-neutral-200 pt-3 flex flex-wrap items-center gap-2">
         <span>

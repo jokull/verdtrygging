@@ -1,18 +1,16 @@
 /**
- * Debt & equity over time — built entirely from the user's uploaded Arion
- * "LoanPayments" export(s). Nothing is baked in: the chart is blank (a
- * "want to see your equity develop?" prompt) until a workbook is uploaded.
+ * Debt & equity over time — a derived view over the calculator's loans.
  *
- * Every distinct Lánsnúmer (loanId) across all uploaded files becomes its own
- * loan series (files stack). Each series' debt history is reconstructed
- * backward from an anchor balance the user supplies ("staða í dag"), using the
- * export's per-payment höfuðstóll (principal) and verðbætur (indexation).
- * Property value is indexed by a real HMS series (buyer picks a property type
- * + region), anchored so purchasePrice is the value at the chart's first
- * month; equity = property − total debt. The "today" marker is the real
- * current date; the UI also shows how fresh the HMS data is.
+ * Each loan is modelled from its manual terms (balance, apr, remainingMonths,
+ * method — the same fields the Schedule table uses) and projected forward with
+ * `computeLoanSchedule`. If a loan also carries an uploaded Arion payment
+ * history (`loan.history`), the real past is overlaid: the debt curve is
+ * reconstructed backward from the loan's balance, and real prepayments /
+ * séreignarsparnaður show as dots. The two join at the real current date.
  *
- * The workbook is parsed ENTIRELY in the browser (static site, no server).
+ * Property value is indexed by a real HMS series (buyer picks property type +
+ * region), anchored so purchasePrice is the value at the chart's first month.
+ * The "today" marker and loan defaults derive from `new Date()`.
  */
 import { useMemo, useState } from "react";
 import { defineChart, areaY, ruleX, dot, lineY, type ChartCurve } from "@tanstack/charts";
@@ -20,16 +18,23 @@ import { tooltip } from "@tanstack/charts/tooltip";
 import { scaleLinear } from "@tanstack/charts/scales/linear";
 import { scaleTime } from "d3-scale";
 import { Chart } from "@tanstack/react-charts/tooltip";
-import * as XLSX from "xlsx";
+import { computeLoanSchedule } from "../calc";
 import { buildCPISeries } from "../cpi";
-import type { ScenarioConfig } from "../types";
-import { HMS_OPTIONS, hmsIndexForMonth, hmsAgeMonths, hmsSeries } from "../data/hms";
+import type { LoanInput, Assumptions, UploadedRow } from "../types";
+import {
+  HMS_OPTIONS,
+  hmsIndexForMonth,
+  hmsAgeMonths,
+  hmsSeries,
+} from "../data/hms";
+import { reconstructDebtMap, monthKey, monthDiff, addMonthKey } from "../utils/payment-history";
 
 interface Row {
   month: Date;
   debt: number;
   equity: number;
   property: number;
+  historic: boolean; // true = backed by a real uploaded payment ledger
 }
 
 interface ExtraDot {
@@ -40,27 +45,8 @@ interface ExtraDot {
   loanId: number;
 }
 
-// One payment row from a LoanPayments export ("Lánsnúmer, Aðgerð, Greiðsludags.,
-// Mynt, Höfuðstóll, Vextir, Verðbætur á höfuðstól, ..., Samtals").
-interface UploadedRow {
-  loanId: number;
-  action: string;
-  date: string; // "YYYY-MM"
-  principal: number; // Höfuðstóll
-  indexation: number; // Verðbætur á höfuðstól
-  total: number; // Samtals
-}
-
-// A single loan, grouped by Lánsnúmer across all uploaded files.
-interface LoanSeries {
-  loanId: number;
-  name: string;
-  rows: UploadedRow[];
-  currentBalance: number; // "staða í dag" — anchor for the backward walk
-}
-
-// The CPI path for deflation (4.3 → 2.5%), anchored to the current year.
-const CPI_SCENARIO: ScenarioConfig = (() => {
+// The CPI path for projection (4.3 → 2.5%), anchored to the current year.
+const CPI_SCENARIO = (() => {
   const y = new Date().getFullYear();
   return {
     label: "Grunn",
@@ -77,23 +63,6 @@ function fmtISK(v: number): string {
   return `${Math.round(v).toLocaleString("is-IS")} kr.`;
 }
 
-function monthKey(d: Date): string {
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
-}
-
-function addMonthKey(ym: string, n: number): string {
-  const [y, m] = ym.split("-").map(Number);
-  const d = new Date(Date.UTC(y!, m! - 1 + n, 1));
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
-}
-
-function monthDiff(a: string, b: string): number {
-  const [ay, am] = a.split("-").map(Number);
-  const [by, bm] = b.split("-").map(Number);
-  return (by! - ay!) * 12 + (bm! - am!);
-}
-
-/** Contiguous "YYYY-MM" keys from `from` (inclusive) to `to` (inclusive). */
 function monthRange(from: string, to: string): string[] {
   const out: string[] = [];
   let m = from;
@@ -104,36 +73,6 @@ function monthRange(from: string, to: string): string[] {
     guard++;
   }
   return out;
-}
-
-/**
- * Reconstruct a loan's debt-over-time going backward from `currentBalance`.
- * Rows are aggregated by month first (a month can carry several payments —
- * scheduled installment + pension + prepayment), then the balance is walked
- * back: balance_before = balance_after − indexation + principal, with
- * balance_after[last] = currentBalance as the anchor.
- */
-function reconstructDebt(series: LoanSeries): Map<string, number> {
-  // Aggregate principal + indexation per month.
-  const byMonth = new Map<string, { principal: number; indexation: number }>();
-  for (const r of series.rows) {
-    const cur = byMonth.get(r.date) ?? { principal: 0, indexation: 0 };
-    cur.principal += r.principal;
-    cur.indexation += r.indexation;
-    byMonth.set(r.date, cur);
-  }
-  const months = [...byMonth.keys()].sort();
-  const map = new Map<string, number>();
-  if (months.length === 0) return map;
-  let after = series.currentBalance; // balance after the last payment
-  for (let i = months.length - 1; i >= 0; i--) {
-    const m = months[i]!;
-    const { principal, indexation } = byMonth.get(m)!;
-    map.set(m, after);
-    // before = after − indexation + principal  (balance entering this month)
-    after = after - indexation + principal;
-  }
-  return map;
 }
 
 /** Classify a payment row as an extra (dot) vs a scheduled installment. */
@@ -165,10 +104,14 @@ const stepCurve: ChartCurve = {
   },
 };
 
-export function DebtEquityChart() {
-  const [series, setSeries] = useState<LoanSeries[]>([]);
-  // Property value is indexed by a real HMS series (chosen by property type);
-  // purchasePrice is the property value at the chart's first month.
+interface Props {
+  loans: LoanInput[];
+  assumptions: Assumptions;
+  /** Re-parse an uploaded workbook into a loan's history (from the loan card). */
+  onAttachHistory?: (loanId: string, rows: UploadedRow[]) => void;
+}
+
+export function DebtEquityChart({ loans, assumptions }: Props) {
   const [purchasePrice, setPurchasePrice] = useState(60_000_000); // anonymized default
   const [hmsKey, setHmsKey] = useState("fjolbyliCap");
   const [real, setReal] = useState(false);
@@ -177,113 +120,79 @@ export function DebtEquityChart() {
   const today = new Date();
   const todayKey = monthKey(today);
 
-  // Parse one uploaded workbook, group rows by Lánsnúmer across files.
-  function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-    const results = Array.from(files).map((file) =>
-      file.arrayBuffer().then((buf) => {
-        const wb = XLSX.read(buf, { type: "array", cellDates: true });
-        const ws = wb.Sheets[wb.SheetNames[0]!];
-        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
-        return (rows as unknown[])
-          .slice(1)
-          .map((r) => r as Array<string | number | Date | null>)
-          .filter((r) => r && r[0] != null && r[2] instanceof Date)
-          .map((r) => ({
-            loanId: Number(r[0]),
-            action: String(r[1] ?? ""),
-            date: monthKey(r[2] as Date),
-            principal: Number(r[4] ?? 0),
-            indexation: Number(r[6] ?? 0),
-            total: Number(r[12] ?? 0),
-          }));
-      })
-    );
-    Promise.all(results).then((grouped) => {
-      const flat = grouped.flat();
-      setSeries((prev) => {
-        const acc = new Map<number, LoanSeries>();
-        for (const s of prev) acc.set(s.loanId, s);
-        for (const r of flat) {
-          const existing = acc.get(r.loanId);
-          if (existing) {
-            // Merge rows (dedupe by date+principal+indexation so a re-upload of
-            // the same file doesn't double-count, but distinct same-month
-            // payments survive); keep the user's anchor balance.
-            const byKey = new Map(
-              existing.rows.map((x) => [
-                `${x.date}|${x.principal}|${x.indexation}`,
-                x,
-              ])
-            );
-            byKey.set(`${r.date}|${r.principal}|${r.indexation}`, r);
-            existing.rows = [...byKey.values()].sort((a, b) =>
-              a.date.localeCompare(b.date)
-            );
-            acc.set(r.loanId, existing);
-          } else {
-            acc.set(r.loanId, {
-              loanId: r.loanId,
-              name: `Lán ${r.loanId}`,
-              rows: [r],
-              currentBalance: 10_000_000, // editable placeholder anchor
-            });
-          }
-        }
-        return [...acc.values()];
-      });
-    });
-  }
-
-  function uploadMore(e: React.ChangeEvent<HTMLInputElement>) {
-    handleUpload(e);
-    // Re-arm the input so the same file can be picked again after deletion.
-    e.target.value = "";
-  }
-
-  function updateSeries(loanId: number, patch: Partial<LoanSeries>) {
-    setSeries((prev) =>
-      prev.map((s) => (s.loanId === loanId ? { ...s, ...patch } : s))
-    );
-  }
-
-  function removeSeries(loanId: number) {
-    setSeries((prev) => prev.filter((s) => s.loanId !== loanId));
-  }
-
-  // Build the monthly rows: total debt per month (sum across series), property
-  // grown from purchasePrice, equity = property − debt.
+  // Build the monthly rows: past from each loan's history (if any), future from
+  // each loan's terms, joined at the real current date.
   const { rows, debtByMonth } = useMemo(() => {
-    if (series.length === 0) return { rows: [] as Row[], debtByMonth: new Map<string, number>() };
-    const earliest = series
-      .flatMap((s) => s.rows.map((r) => r.date))
-      .sort()[0]!;
-    const months = monthRange(earliest, todayKey);
+    if (loans.length === 0) {
+      return {
+        rows: [] as Row[],
+        debtByMonth: new Map<string, number>(),
+      };
+    }
+
+    // Determine the span: earliest history start (or purchase) → today → horizon.
+    const historyStarts = loans
+      .filter((l) => l.history && l.history.length > 0)
+      .map((l) => l.history!.map((r) => r.date).sort()[0]!);
+    const earliestHistory = historyStarts.length ? historyStarts.sort()[0]! : todayKey;
+
+    // Projection: the base ("Grunn") scenario, matching the Schedule table.
+    const numMonths = Math.ceil(
+      Math.max(...loans.map((l) => l.remainingMonths)) * 1.5
+    );
+    const startMonth = assumptions.startMonth;
+    const cpiSeries = buildCPISeries(startMonth, numMonths, CPI_SCENARIO);
+
+    const futureMonths = monthRange(startMonth, addMonthKey(startMonth, numMonths - 1));
+    const months = monthRange(earliestHistory, addMonthKey(startMonth, numMonths - 1));
+
     const debtBy = new Map<string, number>();
-    for (const s of series) {
-      const rebuilt = reconstructDebt(s);
+    const historicSet = new Set<string>();
+    // History (optional): reconstruct backward from the loan's balance over
+    // the months it has a real payment ledger for.
+    for (const loan of loans) {
+      if (!loan.history || loan.history.length === 0) continue;
+      const rebuilt = reconstructDebtMap(loan.history, loan.balance);
       let last: number | null = null;
       for (const m of months) {
         const v = rebuilt.get(m);
         if (v != null) last = v;
-        debtBy.set(m, (debtBy.get(m) ?? 0) + (last ?? 0));
+        if (last != null) {
+          debtBy.set(m, (debtBy.get(m) ?? 0) + last);
+          historicSet.add(m);
+        }
       }
     }
+    // Future: project each loan from its balance over the remaining months.
+    for (const loan of loans) {
+      const schedule = computeLoanSchedule(
+        loan,
+        startMonth,
+        cpiSeries
+      );
+      for (const r of schedule) {
+        const m = r.month;
+        if (!futureMonths.includes(m)) continue;
+        debtBy.set(m, (debtBy.get(m) ?? 0) + r.balance);
+      }
+    }
+
+    // Carry the latest known debt into months with no data (within the span).
     const rows: Row[] = months.map((m) => {
       const debt = debtBy.get(m) ?? 0;
       const property = Math.round(
-        purchasePrice * (hmsIndexForMonth(hmsKey, m) / hmsIndexForMonth(hmsKey, earliest))
+        purchasePrice * (hmsIndexForMonth(hmsKey, m) / hmsIndexForMonth(hmsKey, earliestHistory))
       );
       return {
         month: new Date(`${m}-01T00:00:00Z`),
         debt,
         property,
         equity: property - debt,
+        historic: historicSet.has(m),
       };
     });
     return { rows, debtByMonth: debtBy };
-  }, [series, purchasePrice, hmsKey, todayKey]);
+  }, [loans, assumptions, purchasePrice, hmsKey, todayKey]);
 
   // One continuous CPI series from the first month to now — for deflation.
   const fullCpi = useMemo(
@@ -317,12 +226,11 @@ export function DebtEquityChart() {
     return fullCpi[nowCpiIdx]! / (fullCpi[offset] ?? fullCpi[nowCpiIdx]!);
   };
 
-  // Extra-principal payments (Innborgun / séreignarsparnaður) as dots on the
-  // debt boundary; details surface in the hover card.
+  // Extra-principal payments from real uploaded histories as dots.
   const extraDots = useMemo<ExtraDot[]>(
     () =>
-      series.flatMap((s) =>
-        s.rows.flatMap((r) => {
+      loans.flatMap((loan) =>
+        (loan.history ?? []).flatMap((r) => {
           const kind = isExtra(r.action);
           if (!kind) return [];
           if (kind === "pension" && !showPension) return [];
@@ -339,7 +247,7 @@ export function DebtEquityChart() {
           ];
         })
       ),
-    [series, showPension, debtByMonth]
+    [loans, showPension, debtByMonth]
   );
 
   const definition = useMemo(
@@ -428,34 +336,26 @@ export function DebtEquityChart() {
 
   const lastRow = displayRows[displayRows.length - 1];
 
-  if (series.length === 0) {
+  if (loans.length === 0) {
     return (
       <section className="space-y-3">
         <h2 className="text-sm font-bold">Skuld og eigið fé</h2>
         <div className="border border-neutral-200 rounded p-8 text-center space-y-3">
           <p className="text-neutral-600 text-sm">
-            Want to view how your equity has developed? Upload payment
-            history — no data is shared or uploaded, it stays in your browser.
+            Want to view how your equity has developed? Add a loan above, then
+            (optionally) upload its payment history — no data is shared or
+            uploaded, it stays in your browser.
           </p>
           <p className="text-neutral-400 text-xs">
-            Hlaðaðu inn Arion "LoanPayments" greiðslusögu (.xlsx) til að sjá
-            skuld og eigið fé þróast yfir tíma. Gögnin eru lesin alfarið í
-            vafranum.
+            Bættu við láni hér að ofan. Ef þú hleður inn Arion greiðslusögu
+            (.xlsx) sýnir grafið raunverulega sögu skuldarinnar.
           </p>
-          <label className="inline-flex items-center gap-1 rounded border border-neutral-300 px-3 py-1.5 text-sm cursor-pointer hover:bg-neutral-100">
-            ⬆ Upload payment history (.xlsx)
-            <input
-              type="file"
-              accept=".xlsx"
-              multiple
-              onChange={handleUpload}
-              className="sr-only"
-            />
-          </label>
         </div>
       </section>
     );
   }
+
+  const withHistory = loans.filter((l) => l.history && l.history.length > 0).length;
 
   return (
     <section className="space-y-3">
@@ -524,16 +424,6 @@ export function DebtEquityChart() {
           />
           Sýna séreignarsparnað (bláir punktar)
         </label>
-        <label className="flex items-center gap-1 text-xs">
-          Bæta við greiðsluskrá (.xlsx):
-          <input
-            type="file"
-            accept=".xlsx"
-            multiple
-            onChange={uploadMore}
-            className="text-xs"
-          />
-        </label>
         {lastRow ? (
           <span className="ml-auto text-neutral-500">
             {today.toLocaleDateString("is-IS", { month: "short", year: "numeric" })}
@@ -542,49 +432,10 @@ export function DebtEquityChart() {
         ) : null}
       </div>
 
-      {series.length > 0 ? (
-        <div className="space-y-1">
-          {series.map((s) => (
-            <div
-              key={s.loanId}
-              className="flex flex-wrap items-center gap-2 text-xs text-neutral-600"
-            >
-              <span className="font-medium">{s.name}</span>
-              <input
-                type="text"
-                value={s.name}
-                onChange={(e) => updateSeries(s.loanId, { name: e.target.value })}
-                className="border-b border-transparent hover:border-neutral-300 focus:border-neutral-500 outline-none w-28 text-xs"
-              />
-              <label className="flex items-center gap-1">
-                Staða í dag:
-                <input
-                  type="number"
-                  value={s.currentBalance}
-                  onChange={(e) =>
-                    updateSeries(s.loanId, { currentBalance: Number(e.target.value) })
-                  }
-                  step={100_000}
-                  min={0}
-                  className="w-28 border border-neutral-300 px-1 py-0.5 text-right text-xs"
-                />
-              </label>
-              <span className="text-neutral-400">{s.rows.length} færslur</span>
-              <button
-                onClick={() => removeSeries(s.loanId)}
-                className="text-neutral-400 hover:text-red-600"
-              >
-                eyða
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : null}
-
       <p className="text-xs text-neutral-500">
-        ⚠ Unnið alfarið í vafranum — ekkert sent á netþjón.{" "}
-        {series.map((s) => s.rows.length).reduce((a, b) => a + b, 0)} færslur
-        úr {series.length} {series.length > 1 ? "lánum" : "láni"}.
+        {withHistory > 0
+          ? `✓ ${withHistory} lán með raunverulegri greiðslusögu. Unnið alfarið í vafranum — ekkert sent á netþjón.`
+          : "Framspá byggð á forsendum reiknivélar. Hlaðiðu inn Arion greiðslusögu (.xlsx) til að sjá raunverulega sögu skuldarinnar."}
       </p>
 
       <div className="border border-neutral-200 rounded p-2">
@@ -618,6 +469,9 @@ export function DebtEquityChart() {
                 <div>Skuld: {fmtISK(d.debt)}</div>
                 <div>Eigið fé: {fmtISK(d.equity)}</div>
                 <div>Fasteign: {fmtISK(d.property)}</div>
+                {d.historic ? (
+                  <div className="text-neutral-500">Sögulegt (raunveruleg greiðslusaga)</div>
+                ) : null}
                 {extras.map((x) => (
                   <div key={`${x.kind}-${x.loanId}-${x.amount}`} className="text-violet-700">
                     {x.kind === "prepayment" ? "Innborgun" : "Séreignarsparnaður"}:{" "}
@@ -631,12 +485,13 @@ export function DebtEquityChart() {
       </div>
 
       <p className="text-xs text-neutral-400">
-        Saga: upphlaðin Arion greiðslusaga (höfuðstóll + verðbætur), staðan í dag
-        er akkerið. Fasteignavirði er leiðrétt með HMS vísitölu (valin
-        eignategund) — kaupverðið gildir fyrir fyrsta mánuð grafarinnar.
-        Framspá: ekki innifalin — þetta er upplýst saga eigin fjár.
-        Raunvirði leiðréttir öll gildi með vísitölu neysluverðs
-        (CPI_now/CPI_month). Bláir punktar (valfrjálsir) = séreignarsparnaður.
+        {withHistory > 0
+          ? "Saga: upphlaðin Arion greiðslusaga (höfuðstóll + verðbætur), staðan í dag er akkerið. Framspá: lánaáætlun reiknivélar (CPI 4.3→2.5%) út frá forsendum. "
+          : "Framspá: lánaáætlun reiknivélar (CPI 4.3→2.5%) út frá forsendum. "}
+        Fasteignavirði er leiðrétt með HMS vísitölu (valin eignategund) — kaupverðið
+        gildir fyrir fyrsta mánuð grafarinnar. Raunvirði leiðréttir öll gildi með
+        vísitölu neysluverðs (CPI_now/CPI_month). Bláir punktar (valfrjálsir) =
+        séreignarsparnaður.
       </p>
     </section>
   );
