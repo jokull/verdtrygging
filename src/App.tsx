@@ -32,6 +32,21 @@ export function App() {
       <hr className="border-neutral-200" />
 
       <DebtEquityChart />
+
+      <footer className="text-xs text-neutral-400 border-t border-neutral-200 pt-3 flex flex-wrap items-center gap-2">
+        <span>
+          Eigið fé reiknivél — gögnin eru lesin alfarið í vafranum (ekkert sent á
+          netþjón).
+        </span>
+        <a
+          href="https://github.com/jokull/verdtrygging"
+          target="_blank"
+          rel="noreferrer"
+          className="underline hover:text-neutral-600"
+        >
+          github.com/jokull/verdtrygging
+        </a>
+      </footer>
     </div>
   );
 }

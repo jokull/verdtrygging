@@ -1,4 +1,4 @@
-![Debt & equity chart](docs/screenshot.png)
+**[Live at lanareiknivel.solberg.club](https://lanareiknivel.solberg.club)** · [GitHub](https://github.com/jokull/verdtrygging)
 
 ## Stack
 
