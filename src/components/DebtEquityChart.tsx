@@ -125,9 +125,12 @@ export function DebtEquityChart({ loans, assumptions }: Props) {
   // data point. The HMS index only exists to 2026-07; without this the model
   // clamps it flat, which in real terms makes property fall purely via CPI.
   // Historic months (≤ last HMS point) still use the real HMS index.
-  // Default 2.5%/yr ≈ the actual 2024-26 HMS trajectory (+1.4-2.2%/yr); with
-  // CPI at ~4.2% that makes real prices fall ~2%/yr, matching observations.
-  const [growthPct, setGrowthPct] = useState(2.5);
+  // Default 4.5%/yr ≈ the long-run real appreciation trend. Over the full
+  // 2020-26 window real prices rose +16.6% total (+2.39%/yr); at 4.5% nominal
+  // vs the calculator's CPI path (4.3%→2.5%) the model gives ~+8% real at 5yr
+  // and ~+44% at 20yr — matching that historical +2.4%/yr real trend. The
+  // 2024-26 real decline was a rare correction, not the norm.
+  const [growthPct, setGrowthPct] = useState(4.5);
 
   const today = new Date();
   const todayKey = monthKey(today);
@@ -558,10 +561,12 @@ export function DebtEquityChart({ loans, assumptions }: Props) {
         {withHistory > 0
           ? "Saga: upphlaðin Arion greiðslusaga (höfuðstóll + verðbætur), staðan í dag er akkerið. Framspá: lánaáætlun reiknivélar (CPI 4.3→2.5%) út frá forsendum. "
           : "Framspá: lánaáætlun reiknivélar (CPI 4.3→2.5%) út frá forsendum. "}
-        Fasteignavirði er leiðrétt með HMS vísitölu (valin eignategund) — kaupverðið
-        gildir fyrir fyrsta mánuð grafarinnar. Raunvirði leiðréttir öll gildi með
-        vísitölu neysluverðs (CPI_now/CPI_month). Bláir punktar (valfrjálsir) =
-        séreignarsparnaður.
+        Fasteignavirði: söguleg mánuði ≤ HMS 2026-07 nota raunvísitöluna;
+        framtíðarmánuðir vaxa {growthPct}%/ár (nafnvirði) frá síðasta HMS gildi.
+        Raunvirði leiðréttir öll gildi með vísitölu neysluverðs (CPI_now/CPI_month).
+        Bláir punktar (valfrjálsir) = séreignarsparnaður. Forsendan um {growthPct}%/
+        ár er byggð á langtímaþróun (2020-26: raunverð +2,4%/ár); 2024-26 lækkunin
+        var sjaldgæf leiðrétting, ekki norm.
       </p>
     </section>
   );
