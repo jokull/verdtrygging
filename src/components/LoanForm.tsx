@@ -1,8 +1,9 @@
 import type { LoanInput, RateChange, PaymentBracket } from "../types";
 import { fmtISK } from "../utils/format";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { BracketTable } from "./BracketTable";
 import { parseLoanPayments } from "../utils/payment-history";
+import { deriveBalanceFromSchedule, ARION_RATE_SCHEDULES } from "../data/arion-schedules";
 
 interface Props {
   loan: LoanInput;
@@ -99,6 +100,24 @@ export function LoanForm({ loan, onChange, onRemove }: Props) {
       originationMonth: undefined,
       history: undefined,
     });
+
+  // If a ledger is attached and we have this loan's exact Arion indexation-rate
+  // schedule, derive the current balance ("Eftirst.") exactly via forward walk.
+  const derivedBalance = useMemo(() => {
+    if (!loan.history || loan.history.length === 0 || !loan.arionLoanId) return null;
+    const sched = ARION_RATE_SCHEDULES[loan.arionLoanId];
+    if (!sched) return null;
+    const byMonth = new Map<string, number>();
+    for (const r of loan.history) {
+      // The Útgreiðsla (disbursement) row creates the loan — exclude its
+      // negative principal so the walk isn't double-counted from origination.
+      if (/útgreiðsla|disburs/i.test(r.action)) continue;
+      byMonth.set(r.date, (byMonth.get(r.date) ?? 0) + r.principal);
+    }
+    const monthlyPrincipal = [...byMonth.entries()].map(([month, principal]) => ({ month, principal }));
+    const res = deriveBalanceFromSchedule(loan.arionLoanId, monthlyPrincipal);
+    return res;
+  }, [loan.history, loan.arionLoanId]);
 
   return (
     <div className="border border-neutral-300 p-3 space-y-2">
@@ -270,6 +289,20 @@ export function LoanForm({ loan, onChange, onRemove }: Props) {
                 : ""}
               {loan.arionLoanId ? ` · lán ${loan.arionLoanId}` : ""}
             </div>
+            {derivedBalance ? (
+              <div className="text-xs text-emerald-700 flex items-center gap-2">
+                <span>
+                  Nákvæm staða (fyrirslag): {fmtISK(derivedBalance.balance)} ·{" "}
+                  {derivedBalance.months} mán.
+                </span>
+                <button
+                  onClick={() => update({ balance: derivedBalance.balance })}
+                  className="text-xs border border-emerald-300 px-1 py-0.5 hover:bg-emerald-50"
+                >
+                  nota
+                </button>
+              </div>
+            ) : null}
             <div className="flex items-center gap-2">
               <button
                 onClick={detachHistory}
