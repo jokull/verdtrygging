@@ -34,13 +34,22 @@ No backend, no server, no telemetry. The workbook never leaves the browser.
    edge, and the loan defaults (startMonth, base-rate years) all derive from
    `new Date()`, not a baked-in snapshot.
 
-### HMS index data
+The monthly series lives in `src/data/hms-data.json` (generated); `src/data/hms.ts`
+is the logic wrapper (types, property-type options, per-month interpolation).
+The data is captured from hms.is `kaupvisitala.csv` (columns
+`VISITALA_FJOLBYLI_HOFUDBORGARSVAEDI`, `VISITALA_SERBYLI_*`, …). Seven series,
+monthly 2020-01 → 2026-07, all published Aug 2026.
 
-`src/data/hms.ts` ships the HMS íbúðaverðsvísitölur (nominal), captured from
-hms.is `kaupvisitala.csv` (columns `VISITALA_FJOLBYLI_HOFUDBORGARSVAEDI`,
-`VISITALA_SERBYLI_*`, …). Seven series, monthly 2020-01 → 2026-07, all published
-Aug 2026. hms.is is bot-gated, so refresh by opening the page in a real browser
-and reading the CSV (or use `agent-browser` to bypass the Vercel checkpoint).
+The CSV is served from a public OCI object-storage endpoint (not the bot-gated
+hms.is page), so you can refresh the data in one command:
+
+```sh
+bun run refresh:hms
+```
+
+That fetches the live CSV and rewrites `src/data/hms-data.json`. hms.is itself
+is behind a Vercel checkpoint — if the endpoint ever moves, open the page in a
+real browser (agent-browser) and read the CSV from there.
 
 ### Data privacy
 
