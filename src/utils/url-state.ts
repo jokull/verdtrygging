@@ -73,6 +73,7 @@ function expand(compact: CompactState): AppState {
       })),
       pensionPrincipal: cl.pp,
       rateChanges: cl.rc.map((rc) => ({ atMonth: rc.m, newApr: rc.a })),
+      startMonth: compact.sm,
     })),
     assumptions: {
       startMonth: compact.sm,

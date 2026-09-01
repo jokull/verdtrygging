@@ -20,6 +20,7 @@ export function defaultLoans(): LoanInput[] {
       extraBrackets: [],
       pensionPrincipal: 0,
       rateChanges: [],
+      startMonth: currentMonth(),
     },
     {
       id: id2,
@@ -32,6 +33,7 @@ export function defaultLoans(): LoanInput[] {
       extraBrackets: [{ startYear: 2027, years: 5, amount: 90_000 }],
       pensionPrincipal: 38_500,
       rateChanges: [],
+      startMonth: currentMonth(),
     },
   ];
 }

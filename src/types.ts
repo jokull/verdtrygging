@@ -31,6 +31,9 @@ export interface LoanInput {
   arionLoanId?: number;
   originationPrincipal?: number;
   originationMonth?: string; // "YYYY-MM"
+  startMonth: string; // "YYYY-MM" — the month the projection begins (today by
+  // default; set to the loan's origination month when a ledger is attached so
+  // the projection/schedule span matches the loan's real term).
   history?: UploadedRow[];
 }
 

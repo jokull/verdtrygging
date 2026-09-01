@@ -32,6 +32,7 @@ export function LoanList({ loans, onChange }: Props) {
         extraBrackets: [],
         pensionPrincipal: 0,
         rateChanges: [],
+        startMonth: new Date().toISOString().slice(0, 7),
       },
     ]);
   };

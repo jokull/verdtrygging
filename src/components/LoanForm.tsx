@@ -81,6 +81,8 @@ export function LoanForm({ loan, onChange, onRemove }: Props) {
         arionLoanId: parsed.loanId || loan.arionLoanId,
         originationPrincipal: parsed.originationPrincipal || loan.originationPrincipal,
         originationMonth: parsed.originationMonth || loan.originationMonth,
+        // Start the projection at the ledger's origination month (was today).
+        startMonth: parsed.originationMonth || loan.startMonth,
         history: parsed.rows,
       });
     } catch (err) {
@@ -159,6 +161,22 @@ export function LoanForm({ loan, onChange, onRemove }: Props) {
             <option value="annuity">Jafngreiðslur</option>
             <option value="equal_principal">Jafnar afborganir</option>
           </select>
+        </label>
+        <NumInput
+          label="Nýr hst."
+          value={loan.originationPrincipal ?? 0}
+          onChange={(v) => update({ originationPrincipal: v })}
+          step={100000}
+          suffix="kr."
+        />
+        <label className="flex items-center gap-1 text-xs">
+          <span className="w-24 text-neutral-500 shrink-0">Upphafs mán.</span>
+          <input
+            type="month"
+            value={loan.startMonth}
+            onChange={(e) => update({ startMonth: e.target.value })}
+            className="border border-neutral-300 px-1 py-0.5 text-xs"
+          />
         </label>
       </div>
 

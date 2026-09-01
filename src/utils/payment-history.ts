@@ -58,10 +58,16 @@ export async function parseLoanPayments(file: File): Promise<ParsedHistory> {
   return { loanId, rows, originationPrincipal, originationMonth };
 }
 
-/** Aggregate payment rows by month (sum principal + indexation). */
+/**
+ * Aggregate principal + indexation per month, EXCLUDING the Útgreiðsla
+ * (disbursement) row — it carries negative principal (the payout) and creates
+ * the loan rather than repaying it. Counting it as a payment would collapse the
+ * reconstructed balance.
+ */
 export function aggregateByMonth(rows: UploadedRow[]): Map<string, { principal: number; indexation: number }> {
   const byMonth = new Map<string, { principal: number; indexation: number }>();
   for (const r of rows) {
+    if (/útgreiðsla|disburs/i.test(r.action)) continue;
     const cur = byMonth.get(r.date) ?? { principal: 0, indexation: 0 };
     cur.principal += r.principal;
     cur.indexation += r.indexation;

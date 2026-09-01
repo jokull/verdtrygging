@@ -132,31 +132,32 @@ export function DebtEquityChart({ loans, assumptions }: Props) {
       };
     }
 
-    // Determine the span: earliest history start (or purchase) → today → horizon.
-    const historyStarts = loans
-      .filter((l) => l.history && l.history.length > 0)
-      .map((l) => l.history!.map((r) => r.date).sort()[0]!);
-    const earliestHistory = historyStarts.length ? historyStarts.sort()[0]! : todayKey;
+    // Determine the span: earliest history/start month (or purchase) → today →
+    // horizon.
+    const earlyMonths = loans
+      .flatMap((l) => [
+        ...(l.history ?? []).map((r) => r.date),
+        l.startMonth,
+      ])
+      .filter(Boolean)
+      .sort();
+    const earliestHistory = earlyMonths.length ? earlyMonths[0]! : todayKey;
 
     // Projection: the base ("Grunn") scenario, matching the Schedule table.
     const numMonths = Math.ceil(
       Math.max(...loans.map((l) => l.remainingMonths)) * 1.5
     );
-    const startMonth = assumptions.startMonth;
-    const cpiSeries = buildCPISeries(startMonth, numMonths, CPI_SCENARIO);
-
-    const futureMonths = monthRange(startMonth, addMonthKey(startMonth, numMonths - 1));
-    const months = monthRange(earliestHistory, addMonthKey(startMonth, numMonths - 1));
+    const cpiSeries = buildCPISeries(assumptions.startMonth, numMonths, CPI_SCENARIO);
 
     const debtBy = new Map<string, number>();
     const historicSet = new Set<string>();
     // History (optional): reconstruct backward from the loan's balance over
-    // the months it has a real payment ledger for.
+    // the months it has a real payment ledger for. Covers up to today.
     for (const loan of loans) {
       if (!loan.history || loan.history.length === 0) continue;
       const rebuilt = reconstructDebtMap(loan.history, loan.balance);
       let last: number | null = null;
-      for (const m of months) {
+      for (const m of monthRange(earliestHistory, todayKey)) {
         const v = rebuilt.get(m);
         if (v != null) last = v;
         if (last != null) {
@@ -165,16 +166,16 @@ export function DebtEquityChart({ loans, assumptions }: Props) {
         }
       }
     }
-    // Future: project each loan from its balance over the remaining months.
+    // Future: project each loan from its CURRENT balance forward from today —
+    // but only into months NOT already set by history (no double-count at the
+    // seam). The projection start = today; never before.
+    const maxEnd = addMonthKey(assumptions.startMonth, numMonths);
+    const months = monthRange(earliestHistory, maxEnd);
     for (const loan of loans) {
-      const schedule = computeLoanSchedule(
-        loan,
-        startMonth,
-        cpiSeries
-      );
+      const schedule = computeLoanSchedule(loan, assumptions.startMonth, cpiSeries);
       for (const r of schedule) {
         const m = r.month;
-        if (!futureMonths.includes(m)) continue;
+        if (m <= todayKey) continue; // history already owns this span
         debtBy.set(m, (debtBy.get(m) ?? 0) + r.balance);
       }
     }
@@ -336,8 +337,6 @@ export function DebtEquityChart({ loans, assumptions }: Props) {
     [displayRows, today, extraDots, real]
   );
 
-  const lastRow = displayRows[displayRows.length - 1];
-
   if (loans.length === 0) {
     return (
       <section className="space-y-3">
@@ -426,12 +425,18 @@ export function DebtEquityChart({ loans, assumptions }: Props) {
           />
           Sýna séreignarsparnað (bláir punktar)
         </label>
-        {lastRow ? (
-          <span className="ml-auto text-neutral-500">
-            {today.toLocaleDateString("is-IS", { month: "short", year: "numeric" })}
-            {" — "}skuld {fmtM(lastRow.debt)} · eigið fé {fmtM(lastRow.equity)}
-          </span>
-        ) : null}
+        {(() => {
+          const todayRow = displayRowsByMonth.get(todayKey);
+          return (
+            <span className="ml-auto text-neutral-500">
+              {today.toLocaleDateString("is-IS", { month: "short", year: "numeric" })}
+              {" — "}
+              {todayRow
+                ? `skuld ${fmtM(todayRow.debt)} · eigið fé ${fmtM(todayRow.equity)}`
+                : "skuld 0 · eigið fé 0"}
+            </span>
+          );
+        })()}
       </div>
 
       <p className="text-xs text-neutral-500">
